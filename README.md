@@ -100,21 +100,14 @@ Submit a contact form to ensure it processes correctly.
 
 ```mermaid
 graph TD;
-    A[app.py] --> B[requirements.txt];
+    A[nexashe-asha-ai-chatbot] --> B[chatbot.py];
+    A --> E[requirements.txt];
     A --> C[.gitignore];
     A --> D[README.md];
     A --> E[LICENSE];
     B --> F[Environment Variables];
     B --> G[Ollama Settings];
 ```
-
-Project Structure
-nexashe-asha-ai-chatbot/
-├── app.py                # Main Streamlit application
-├── requirements.txt      # Environment variables (API credentials, Ollama settings)
-├── .gitignore            # Git ignore file
-├── README.md             # Project documentation
-└── LICENSE               # License file
 
 Contributing
 Contributions are welcome! Please follow these steps:
