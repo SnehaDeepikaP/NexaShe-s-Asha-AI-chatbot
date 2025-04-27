@@ -94,7 +94,19 @@ Complete your profile, generate a resume, and download it as a .md file.
 Use voice input to submit queries and verify text-to-speech output.
 Submit a contact form to ensure it processes correctly.
 
+# Nexashe ASHA AI Chatbot
 
+## Project Structure
+
+```mermaid
+graph TD;
+    A[app.py] --> B[requirements.txt];
+    A --> C[.gitignore];
+    A --> D[README.md];
+    A --> E[LICENSE];
+    B --> F[Environment Variables];
+    B --> G[Ollama Settings];
+```
 
 Project Structure
 nexashe-asha-ai-chatbot/
