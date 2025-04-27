@@ -10,6 +10,7 @@ import threading
 import queue
 import base64
 from io import BytesIO
+from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
 from dotenv import load_dotenv
