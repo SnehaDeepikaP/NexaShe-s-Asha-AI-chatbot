@@ -24,7 +24,7 @@ Windows Users: Install ffmpeg for audio processing (see Installation).
 Installation
 
 Clone the Repository:
-git clone https://github.com/your-username/nexashe-asha-ai-chatbot.git
+git clone https://github.com/your-username/nexashe-asha-ai-chatbot
 cd nexashe-asha-ai-chatbot
 
 
