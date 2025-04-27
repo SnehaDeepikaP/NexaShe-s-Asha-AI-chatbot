@@ -101,12 +101,12 @@ Submit a contact form to ensure it processes correctly.
 ```mermaid
 graph TD;
     A[nexashe-asha-ai-chatbot] --> B[chatbot.py];
-    A --> E[requirements.txt];
-    A --> C[.gitignore];
-    A --> D[README.md];
-    A --> E[LICENSE];
-    B --> F[Environment Variables];
-    B --> G[Ollama Settings];
+    A --> C[requirements.txt];
+    A --> D[.gitignore];
+    A --> E[README.md];
+    A --> F[LICENSE];
+    C --> G[Environment Variables];
+    C --> H[Ollama Settings];
 ```
 
 Contributing
