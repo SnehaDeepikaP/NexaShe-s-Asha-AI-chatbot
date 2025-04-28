@@ -1,3 +1,4 @@
 gtts
 pydub
 dotenv
+speech_recognition
