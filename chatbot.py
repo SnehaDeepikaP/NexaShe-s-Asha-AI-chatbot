@@ -10,6 +10,7 @@ import threading
 import queue
 import base64
 from io import BytesIO
+import speech_recognition as sr
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
