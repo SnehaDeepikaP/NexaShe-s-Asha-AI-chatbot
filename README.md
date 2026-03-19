@@ -1,127 +1,128 @@
-# NexaShe-s-Asha-AI-chatbot
-NexaShe's Asha AI Chatbot
-Asha is an AI-powered chatbot developed for the JobsForHer Foundation to empower women in their career journeys. Built with Streamlit, it provides job listings, career resources, event information, resume building, and personalized career guidance through an intuitive web interface. The chatbot integrates with the JobsForHer API (or uses sample data) and leverages a local Ollama model (Llama 3.2) for natural language processing.
-Features
+# ✈ CareerPilot — Personal Career Assistant
 
-Interactive Chat: Engage with Asha via text or voice to get answers about job listings, events, career advice, and more.
-Predefined Questions: Quickly access common queries like "Show me job listings" or "What are upcoming events?".
-Resume Builder: Generate professional resumes in Markdown format based on user profiles or upload existing resumes for analysis.
-User Profile Management: Store personal details, skills, education, and work history for tailored responses.
-Multilingual Voice Support: Use speech-to-text for input and text-to-speech for output in languages like English, Hindi, Tamil, and more.
-Contact Form: Submit inquiries to the JobsForHer team.
-Bias Prevention: Detects and redirects biased queries to promote inclusivity.
-API Integration: Fetches real-time job listings, events, and resources from the JobsForHer API (or uses sample data if API credentials are unavailable).
-Response Caching: Enhances performance by caching API data and chatbot responses.
+> An AI-powered career companion built with Streamlit and NVIDIA's Nemotron-70B model. Get personalised career advice, generate resumes, prep for interviews, write cover letters, and more — all in one place.
 
-Prerequisites
+---
 
-Python: Version 3.10 or 3.11 (recommended for compatibility; Python 3.13 may have issues with some dependencies).
-Ollama: A local instance running the Llama 3.2 model for natural language processing.
-Dependencies: Listed in the Installation section.
-Optional: JobsForHer API credentials for live data integration.
-Windows Users: Install ffmpeg for audio processing (see Installation).
+## ✨ Features
 
-Installation
+| Feature | Description |
+|---|---|
+| 💬 **AI Chat** | Conversational career coach powered by NVIDIA Nemotron-70B |
+| 📄 **Resume Builder** | Generate a polished, ATS-friendly resume from your profile |
+| 🎯 **Interview Prep** | AI-generated interview questions + live answer feedback |
+| ✉️ **Cover Letter Generator** | Paste any job description, get a tailored cover letter instantly |
+| 👤 **Profile Manager** | Save your skills, education, and work history for personalised output |
+| 🔊 **Voice Output** | Text-to-speech responses in 10 Indian languages |
+| 💡 **Daily Career Tips** | A fresh tip every day to keep you moving forward |
+| ⚡ **Response Caching** | Faster replies for repeated questions |
 
-Clone the Repository:
-git clone https://github.com/your-username/nexashe-asha-ai-chatbot
-cd nexashe-asha-ai-chatbot
+---
 
+## 🛠 Tech Stack
 
-Set Up a Virtual Environment:
-python -m venv venv
-.\venv\Scripts\activate  # On Windows
-source venv/bin/activate  # On macOS/Linux
+- **Frontend:** Streamlit
+- **AI Model:** `nvidia/llama-3.1-nemotron-70b-instruct` via NVIDIA NIM API
+- **TTS:** gTTS (Google Text-to-Speech)
+- **Languages supported:** English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi
 
+---
 
-Install Dependencies:
-pip install -r requirements.txt
+## 🚀 Getting Started
 
+### 1. Clone the repository
 
-
-Install Ollama:
-
-Download and install Ollama from ollama.ai.
-Pull and run the Llama 3.2 model:ollama run llama3.2
-
-
-
-
-Configure Environment Variables:
-
-Create a .env file in the project root:JFH_API_BASE_URL=https://api.jobsforher.com/v1
-JFH_API_KEY=your_api_key
-JFH_API_SECRET=your_api_secret
-OLLAMA_API_URL=http://localhost:11434/api/generate
-OLLAMA_MODEL=llama3.2
-
-
-If you don’t have JobsForHer API credentials, the app will use sample data (data/job_listing_data.csv and data/session_details.json).
-
-
-Sample Data (Optional):
-
-Ensure the data/ directory contains:
-job_listing_data.csv: Sample job listings.
-session_details.json: Sample event data.
-
-
-If these files are missing, the app uses hardcoded sample data.
-
-
-
-Usage
-
-Run the Application:
-streamlit run app.py
-
-
-Open your browser to http://localhost:8501 to access the app.
-
-
-Navigate the Interface:
-
-Chat with Asha: Use the chat input or predefined questions to ask about jobs, events, or career advice. Enable voice input/output in the sidebar.
-My Profile: Enter personal details, skills, education, and work history for personalized responses.
-Resume Builder: Generate a Markdown resume based on your profile or upload an existing resume for analysis.
-Contact Us: Submit inquiries to the JobsForHer team.
-
-
-Testing:
-
-Test predefined questions (e.g., "Show me job listings") for instant responses.
-Complete your profile, generate a resume, and download it as a .md file.
-Use voice input to submit queries and verify text-to-speech output.
-Submit a contact form to ensure it processes correctly.
-
-# Nexashe ASHA AI Chatbot
-
-## Project Structure
-
-```mermaid
-graph TD;
-    A[nexashe-asha-ai-chatbot] --> B[chatbot.py];
-    A --> C[requirements.txt];
-    A --> D[.gitignore];
-    A --> E[README.md];
-    A --> F[LICENSE];
-    C --> G[Environment Variables];
-    C --> H[Ollama Settings];
+```bash
+git clone https://github.com/yourusername/careerpilot.git
+cd careerpilot
 ```
 
-Contributing
-Contributions are welcome! Please follow these steps:
+### 2. Install dependencies
 
-Fork the repository.
-Create a new branch (git checkout -b feature/your-feature).
-Make your changes and commit (git commit -m "Add your feature").
-Push to the branch (git push origin feature/your-feature).
-Open a pull request.
+```bash
+pip install -r requirements.txt
+```
 
-Please ensure your code follows PEP 8 style guidelines and includes appropriate tests.
-License
-This project is licensed under the MIT License. See the LICENSE file for details.
+### 3. Set up your NVIDIA API key
 
+Get a free API key from [build.nvidia.com](https://build.nvidia.com), then:
 
+```bash
+cp .env.example .env
+```
 
-NexaShe's Asha AI Chatbot is designed to empower women in their career journeys. We hope you find it valuable!
+Open `.env` and add your key:
+
+```
+NVIDIA_API_KEY=your_actual_key_here
+```
+
+> ⚠️ Never commit your `.env` file. It's already in `.gitignore`.
+
+### 4. Run the app
+
+```bash
+streamlit run app.py
+```
+
+Open your browser at `http://localhost:8501`
+
+---
+
+## 📁 Project Structure
+
+```
+careerpilot/
+├── app.py               # Main Streamlit application
+├── requirements.txt     # Python dependencies
+├── .env                 # Your secret API key (never commit this)
+├── .env.example         # Template for environment variables
+├── .gitignore           # Ensures .env is never pushed to GitHub
+└── README.md            # You're reading it!
+```
+
+---
+
+## 🔒 Keeping Your API Key Safe
+
+This project uses a `.env` file to store your API key locally. Here's how it's protected:
+
+- `.env` is listed in `.gitignore` — Git will **never** track or upload it
+- The app reads the key silently using `python-dotenv` — it's never displayed in the UI
+- Share `.env.example` (with a blank placeholder) so collaborators know what's needed without seeing your real key
+
+---
+
+## 📦 Requirements
+
+```
+streamlit>=1.32.0
+requests>=2.31.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+gTTS>=2.4.0
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.14
+pydub>=0.25.1
+```
+
+> **Note:** `pyaudio` may require additional system dependencies.
+> - **Mac:** `brew install portaudio`
+> - **Linux:** `sudo apt-get install portaudio19-dev`
+> - **Windows:** Install via `pipwin install pyaudio`
+
+---
+
+## 🤝 Contributing
+
+Pull requests are welcome! For major changes, please open an issue first to discuss what you'd like to change.
+
+---
+
+## 📄 License
+
+MIT License — feel free to use, modify, and distribute.
+
+---
+
+<p align="center">Built with ❤️ using Streamlit & NVIDIA NIM</p>
