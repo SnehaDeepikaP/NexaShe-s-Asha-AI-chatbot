@@ -529,28 +529,19 @@ def main():
 
     # ── SIDEBAR ──────────────────────────────
     with st.sidebar:
-        st.markdown('<div class="nova-title">✈ CareerPilot</div>', unsafe_allow_html=True)
-        st.markdown('<div class="nova-sub">Personal Career Assistant</div>', unsafe_allow_html=True)
-        st.divider()
-
         # ── API KEY GATE ─────────────────────
         st.markdown("**🔑 NVIDIA API Key**")
         st.caption("Required to use CareerPilot. Get yours free at [build.nvidia.com](https://build.nvidia.com)")
 
-        # Pre-fill from .env if available, else from session state
-        env_key = os.getenv("NVIDIA_API_KEY", "")
-        saved_key = st.session_state.get("user_api_key", env_key)
-
         user_api_key = st.text_input(
             "Enter your NVIDIA API Key",
-            value=saved_key,
+            value="",
             type="password",
-            placeholder="nvapi-xxxxxxxxxxxxxxxxxxxx",
+            placeholder="your_api_key",
             label_visibility="collapsed",
         )
 
         if user_api_key:
-            # Update the client live whenever the key changes
             if user_api_key != st.session_state.get("user_api_key"):
                 st.session_state["user_api_key"] = user_api_key
                 nvidia_client.api_key = user_api_key
@@ -561,6 +552,7 @@ def main():
                 nvidia_client.available = True
         else:
             nvidia_client.available = False
+            nvidia_client.api_key = 
 
         st.divider()
 
@@ -631,18 +623,13 @@ def main():
                     display_feedback(msg.get("id", f"msg_{idx}"))
 
         # Input row
-        col_input, col_lang, col_voice = st.columns([6, 1.5, 1])
+        col_input, col_lang = st.columns([6, 1.5])
         with col_lang:
             lang = st.selectbox(
                 "Lang", options=list(SUPPORTED_LANGUAGES.keys()),
                 format_func=lambda x: SUPPORTED_LANGUAGES[x],
                 label_visibility="collapsed",
             )
-        with col_voice:
-            if st.button("🎤"):
-                spoken = speech_to_text(lang)
-                if spoken:
-                    process_user_query(spoken, lang)
 
         with col_input:
             user_input = st.chat_input("Ask CareerPilot anything about your career…")
