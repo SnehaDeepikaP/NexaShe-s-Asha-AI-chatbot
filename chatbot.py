@@ -5,43 +5,31 @@ import requests
 import os
 from datetime import datetime
 import time
-import hashlib
 import threading
-import queue
 import base64
 from io import BytesIO
 from gtts import gTTS
-from pydub import AudioSegment
-from pydub.playback import play
 from dotenv import load_dotenv
 import uuid
-import random
 import tempfile
 import shutil
 import warnings
 warnings.filterwarnings('ignore')
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Initialize session state variables if they don't exist
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "session_id" not in st.session_state:
-    st.session_state.session_id = f"session_{int(time.time())}"
-
-if "audio_queue" not in st.session_state:
-    st.session_state.audio_queue = queue.Queue()
-
-if "is_listening" not in st.session_state:
-    st.session_state.is_listening = False
-
-if "response_cache" not in st.session_state:
-    st.session_state.response_cache = {}
-
-if "user_profile" not in st.session_state:
-    st.session_state.user_profile = {
+# ─────────────────────────────────────────────
+#  SESSION STATE INIT
+# ─────────────────────────────────────────────
+defaults = {
+    "messages": [],
+    "session_id": f"session_{int(time.time())}",
+    "response_cache": {},
+    "feedback_ratings": {},
+    "contact_form_submitted": False,
+    "career_goals": [],
+    "daily_tip_shown": False,
+    "user_profile": {
         "name": "",
         "email": "",
         "phone": "",
@@ -50,827 +38,896 @@ if "user_profile" not in st.session_state:
         "education": [],
         "work_history": [],
         "preferred_language": "en",
-        "resume_data": None
-    }
+        "resume_data": None,
+        "job_target": "",
+        "linkedin": "",
+        "github": "",
+        "portfolio": "",
+    },
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "feedback_ratings" not in st.session_state:
-    st.session_state.feedback_ratings = {}
+# ─────────────────────────────────────────────
+#  NVIDIA API CLIENT
+# ─────────────────────────────────────────────
+class NvidiaAPIClient:
+    """Wrapper for NVIDIA NIM API (OpenAI-compatible endpoint)."""
 
-if "contact_form_submitted" not in st.session_state:
-    st.session_state.contact_form_submitted = False
+    BASE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+    MODEL    = "nvidia/llama-3.1-nemotron-70b-instruct"
 
-# API Configuration
-class JobsForHerAPI:
     def __init__(self):
-        self.base_url = os.getenv("JFH_API_BASE_URL", "https://api.jobsforher.com/v1")
-        self.api_key = os.getenv("JFH_API_KEY", "")
-        self.api_secret = os.getenv("JFH_API_SECRET", "")
-        self.api_available = bool(self.api_key and self.api_secret)
-        
-    def generate_auth_token(self):
-        timestamp = str(int(time.time()))
-        signature = hashlib.sha256(f"{self.api_key}{timestamp}{self.api_secret}".encode()).hexdigest()
-        return {
-            "X-API-Key": self.api_key,
-            "X-Timestamp": timestamp,
-            "X-Signature": signature
+        self.api_key = os.getenv("NVIDIA_API_KEY", "")
+        self.available = bool(self.api_key)
+
+    def chat(self, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.7) -> str:
+        if not self.available:
+            return (
+                "⚠️ NVIDIA API key not configured. "
+                "Add `NVIDIA_API_KEY` to your `.env` file and restart."
+            )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
-    
-    def get_job_listings(self, limit=10, offset=0, filters=None):
-        if not self.api_available:
-            return self._get_sample_job_data()
-        try:
-            endpoint = f"{self.base_url}/jobs"
-            headers = self.generate_auth_token()
-            params = {"limit": limit, "offset": offset}
-            if filters:
-                params.update(filters)
-            response = requests.get(endpoint, headers=headers, params=params)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                st.error(f"Failed to fetch job listings: {response.status_code}")
-                return self._get_sample_job_data()
-        except Exception as e:
-            st.error(f"Error connecting to JobsForHer API: {str(e)}")
-            return self._get_sample_job_data()
-    
-    def get_events(self, limit=10, offset=0, filters=None):
-        if not self.api_available:
-            return self._get_sample_event_data()
-        try:
-            endpoint = f"{self.base_url}/events"
-            headers = self.generate_auth_token()
-            params = {"limit": limit, "offset": offset}
-            if filters:
-                params.update(filters)
-            response = requests.get(endpoint, headers=headers, params=params)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                st.error(f"Failed to fetch events: {response.status_code}")
-                return self._get_sample_event_data()
-        except Exception as e:
-            st.error(f"Error connecting to JobsForHer API: {str(e)}")
-            return self._get_sample_event_data()
-    
-    def search_resources(self, query, limit=5):
-        if not self.api_available:
-            return self._get_sample_resources()
-        try:
-            endpoint = f"{self.base_url}/resources/search"
-            headers = self.generate_auth_token()
-            params = {"query": query, "limit": limit}
-            response = requests.get(endpoint, headers=headers, params=params)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return self._get_sample_resources()
-        except Exception as e:
-            return self._get_sample_resources()
-    
-    def _get_sample_job_data(self):
-        try:
-            df = pd.read_csv("data/job_listing_data.csv")
-            return {"jobs": df.to_dict(orient='records')}
-        except FileNotFoundError:
-            sample_data = {
-                "jobs": [
-                    {
-                        "job_id": 1,
-                        "title": "Software Engineer",
-                        "company": "TechCorp",
-                        "location": "Bangalore",
-                        "job_type": "Full-time",
-                        "description": "Develop and maintain software applications",
-                        "requirements": "Bachelor's in Computer Science, 2+ years experience",
-                        "posted_date": "2023-05-15"
-                    },
-                    {
-                        "job_id": 2,
-                        "title": "Data Analyst",
-                        "company": "DataInsights",
-                        "location": "Mumbai",
-                        "job_type": "Part-time",
-                        "description": "Analyze data and create insights",
-                        "requirements": "Experience with SQL, Python, and data visualization",
-                        "posted_date": "2023-05-16"
-                    },
-                    {
-                        "job_id": 3,
-                        "title": "Project Manager",
-                        "company": "ManagementPro",
-                        "location": "Remote",
-                        "job_type": "Full-time",
-                        "description": "Lead project teams and ensure timely delivery",
-                        "requirements": "PMP certification, 5+ years in project management",
-                        "posted_date": "2023-05-17"
-                    }
-                ]
-            }
-            return sample_data
-    
-    def _get_sample_event_data(self):
-        try:
-            with open("data/session_details.json", "r") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            sample_events = {
-                "sessions": [
-                    {
-                        "id": 1,
-                        "title": "Breaking the Glass Ceiling",
-                        "description": "Discussion on overcoming workplace barriers",
-                        "date": "2023-06-15T14:00:00",
-                        "duration": "60 minutes",
-                        "speaker": "Dr. Maya Patel"
-                    },
-                    {
-                        "id": 2,
-                        "title": "Resume Building Workshop",
-                        "description": "Learn how to create an effective resume",
-                        "date": "2023-06-20T11:00:00",
-                        "duration": "90 minutes",
-                        "speaker": "Sarah Johnson"
-                    },
-                    {
-                        "id": 3,
-                        "title": "Tech Career Pathways",
-                        "description": "Exploring opportunities in technology",
-                        "date": "2023-06-25T16:00:00",
-                        "duration": "75 minutes",
-                        "speaker": "Lisa Wang"
-                    }
-                ]
-            }
-            return sample_events
-    
-    def _get_sample_resources(self):
-        sample_resources = {
-            "resources": [
-                {
-                    "id": 1,
-                    "title": "Negotiation Skills for Women",
-                    "type": "Article",
-                    "description": "Learn effective strategies for salary negotiation"
-                },
-                {
-                    "id": 2,
-                    "title": "Building Your Personal Brand",
-                    "type": "Video",
-                    "description": "How to create a powerful professional image"
-                },
-                {
-                    "id": 3,
-                    "title": "Women in Leadership",
-                    "type": "E-book",
-                    "description": "Stories and strategies from successful women leaders"
-                }
-            ]
+        payload = {
+            "model": self.MODEL,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
         }
-        return sample_resources
+        try:
+            resp = requests.post(self.BASE_URL, headers=headers, json=payload, timeout=60)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except requests.exceptions.HTTPError as e:
+            return f"❌ API error {resp.status_code}: {resp.text}"
+        except Exception as e:
+            return f"❌ Request failed: {str(e)}"
 
-# Load bias prevention rules
-@st.cache_data
-def load_bias_rules():
-    bias_rules = {
-        "flagged_terms": [
-            "women can't", "women are not", "females can't", "girls can't",
-            "women should stay", "woman's place", "belongs in the kitchen",
-            "too emotional", "not technical enough"
-        ],
-        "redirect_responses": [
-            "I'd like to share that women have been successful leaders across industries. Would you like to explore some leadership success stories instead?",
-            "Research shows diverse teams perform better. Would you like to learn about the positive impact of women in various professional roles?",
-            "I'm here to provide information that supports career growth for everyone. Can I help you with job listings or professional development resources?"
-        ]
-    }
-    return bias_rules
 
-# Response caching decorator
-def cache_response(func):
-    def wrapper(prompt, system_prompt=None):
-        cache_key = f"{prompt}_{system_prompt}"
-        if cache_key in st.session_state.response_cache:
-            return st.session_state.response_cache[cache_key]
-        result = func(prompt, system_prompt)
-        st.session_state.response_cache[cache_key] = result
-        return result
-    return wrapper
+nvidia_client = NvidiaAPIClient()
 
-# Function to query Ollama with caching
-@cache_response
-def query_ollama(prompt, system_prompt=None):
-    url = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
-    if system_prompt is None:
-        system_prompt = """
-        You are Asha, an AI assistant for the JobsForHer Foundation. Your purpose is to help women with their career journeys by providing information about job listings, community events, sessions, mentorship programs, and addressing FAQs.
-        You should always:
-        1. Be supportive, professional, and empowering in your responses
-        2. Provide factual information about careers, jobs, and professional development
-        3. Highlight women's achievements and capabilities in the workplace
-        4. Avoid any gender stereotypes or biases
-        5. Focus on being helpful with job search and career advancement information
-        6. Keep responses concise and to-the-point for better voice readability
-        You are integrated with the JobsForHer.com platform and can provide information about real job listings, events, and resources available on the platform.
-        When discussing job opportunities, mention that users can find more details by visiting the JobsForHer website.
-        """
-    data = {
-        "model": model,
-        "prompt": prompt,
-        "system": system_prompt,
-        "stream": False
-    }
-    try:
-        response = requests.post(url, json=data)
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("response", "I apologize, but I couldn't generate a response.")
-        else:
-            return f"Error: Received status code {response.status_code} from Ollama service."
-    except requests.exceptions.RequestException as e:
-        return f"Error connecting to Ollama service: {str(e)}. Make sure Ollama is running with '{model}' model."
+# ─────────────────────────────────────────────
+#  SYSTEM PROMPT
+# ─────────────────────────────────────────────
+SYSTEM_PROMPT = """
+You are Nova, a sharp and empowering Personal Career Assistant AI.
+Your mission: help users accelerate their careers through guidance on job searching, resume building, interview prep, skill development, networking, and personal branding.
 
-# Check for bias in user input
-def check_for_bias(user_input, bias_rules):
-    user_input_lower = user_input.lower()
-    for term in bias_rules["flagged_terms"]:
-        if term in user_input_lower:
-            return random.choice(bias_rules["redirect_responses"])
-    return None
+Guidelines:
+- Be concise, direct, and actionable. Avoid fluff.
+- Celebrate wins and encourage boldly.
+- Ask clarifying questions when intent is unclear.
+- Provide structured advice (numbered steps, bullet points) when helpful.
+- When discussing career paths, highlight both traditional and unconventional routes.
+- Keep voice-friendly responses brief (under 120 words).
+- You are NOT affiliated with any external job platform. You are the user's personal AI career coach.
+"""
 
-# Function to process user query considering context
-def process_query(query, api_client, bias_rules):
-    bias_response = check_for_bias(query, bias_rules)
-    if bias_response:
-        return bias_response
-    job_data = {"jobs": []}
-    event_data = {"sessions": []}
-    resource_data = {"resources": []}
-    def fetch_jobs():
-        nonlocal job_data
-        job_data = api_client.get_job_listings(limit=5)
-    def fetch_events():
-        nonlocal event_data
-        event_data = api_client.get_events(limit=5)
-    def fetch_resources():
-        nonlocal resource_data
-        resource_data = api_client.search_resources(query, limit=3)
-    threads = [
-        threading.Thread(target=fetch_jobs),
-        threading.Thread(target=fetch_events),
-        threading.Thread(target=fetch_resources)
+# ─────────────────────────────────────────────
+#  DAILY CAREER TIPS
+# ─────────────────────────────────────────────
+DAILY_TIPS = [
+    "💡 Update your LinkedIn headline to reflect your *target* role, not your current one.",
+    "💡 Send one cold outreach message today — even a short one builds momentum.",
+    "💡 Quantify your impact: replace 'managed a team' with 'led 8 engineers to ship X 2 weeks early'.",
+    "💡 Rejections are data points, not verdicts. Log them and look for patterns.",
+    "💡 Your portfolio URL belongs in your email signature, resume, and LinkedIn bio.",
+    "💡 Practice one interview answer aloud today using the STAR method.",
+    "💡 Join one industry Slack or Discord this week. Communities open doors.",
+    "💡 A two-page resume is fine — white space matters more than page count.",
+    "💡 Research the interviewer on LinkedIn before every call.",
+    "💡 Skill gaps aren't barriers — they're your learning roadmap.",
+]
+
+def get_daily_tip() -> str:
+    day_index = datetime.now().timetuple().tm_yday % len(DAILY_TIPS)
+    return DAILY_TIPS[day_index]
+
+# ─────────────────────────────────────────────
+#  CORE AI HELPERS
+# ─────────────────────────────────────────────
+def build_messages(user_query: str, extra_context: str = "") -> list[dict]:
+    history = []
+    for msg in st.session_state.messages[-6:]:
+        history.append({"role": msg["role"], "content": msg["content"]})
+
+    profile = st.session_state.user_profile
+    profile_ctx = ""
+    if profile["name"]:
+        profile_ctx = f"""
+User profile:
+- Name: {profile['name']}
+- Years of experience: {profile['experience']}
+- Skills: {', '.join(profile['skills']) or 'not specified'}
+- Target role: {profile.get('job_target', 'not specified')}
+"""
+
+    system = SYSTEM_PROMPT
+    if profile_ctx:
+        system += f"\n\n{profile_ctx}"
+    if extra_context:
+        system += f"\n\nContext:\n{extra_context}"
+
+    messages = [{"role": "system", "content": system}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_query})
+    return messages
+
+
+def nova_chat(user_query: str, extra_context: str = "", max_tokens: int = 512) -> str:
+    cache_key = f"{user_query}_{extra_context}"
+    if st.session_state.get("enable_caching", True) and cache_key in st.session_state.response_cache:
+        return st.session_state.response_cache[cache_key]
+    msgs = build_messages(user_query, extra_context)
+    result = nvidia_client.chat(msgs, max_tokens=max_tokens)
+    st.session_state.response_cache[cache_key] = result
+    return result
+
+
+def generate_resume(profile: dict) -> str:
+    prompt = f"""
+Create a polished, ATS-friendly resume in Markdown for:
+{json.dumps(profile, indent=2)}
+
+Structure:
+# [Full Name]
+Contact | LinkedIn | GitHub | Portfolio
+
+## Professional Summary (3 sentences, punchy)
+
+## Core Skills (2-column bullet list)
+
+## Work Experience (reverse chronological, bullet-point achievements, quantify where possible)
+
+## Education
+
+## Projects / Certifications (if applicable)
+
+Use bold for company names and titles. Be concise and impactful.
+"""
+    msgs = [
+        {"role": "system", "content": "You are an expert resume writer. Output clean Markdown only."},
+        {"role": "user", "content": prompt},
     ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    user_profile_data = ""
-    if st.session_state.user_profile["name"]:
-        user_profile_data = f"""
-        User Profile Information:
-        Name: {st.session_state.user_profile["name"]}
-        Experience: {st.session_state.user_profile["experience"]} years
-        Skills: {", ".join(st.session_state.user_profile["skills"])}
-        Education: {json.dumps(st.session_state.user_profile["education"])}
-        Work History: {json.dumps(st.session_state.user_profile["work_history"])}
-        Preferred Language: {st.session_state.user_profile["preferred_language"]}
-        """
-    context_prompt = f"""
-    User query: {query}
-    Available job listings (sample):
-    {json.dumps(job_data.get('jobs', [])[:3], indent=2)}
-    Available sessions and events (sample):
-    {json.dumps(event_data.get('sessions', [])[:3], indent=2)}
-    Relevant resources:
-    {json.dumps(resource_data.get('resources', []), indent=2)}
-    {user_profile_data}
-    Current date: {datetime.now().strftime('%Y-%m-%d')}
-    Session ID: {st.session_state.session_id}
-    Previous conversation:
-    {format_conversation_history()}
-    Please provide a helpful, concise response to the user's query based on the context provided.
-    Keep your response brief and to the point for better voice readability.
-    Remember to mention that more information can be found on the JobsForHer website for specific job listings or events.
-    If the user is asking about resume building or needs help with their resume, refer to their profile information if available.
-    """
-    response = query_ollama(context_prompt)
-    return response
+    return nvidia_client.chat(msgs, max_tokens=1500, temperature=0.4)
 
-# Format conversation history for context
-def format_conversation_history():
-    history = ""
-    for msg in st.session_state.messages[-5:]:
-        role = "User" if msg["role"] == "user" else "Asha"
-        history += f"{role}: {msg['content']}\n"
-    return history
 
-# Languages supported for voice input/output
+def analyze_resume_feedback(parsed: dict) -> str:
+    prompt = f"""
+Review this resume data and give 5 concise, actionable improvement tips:
+{json.dumps(parsed, indent=2)}
+
+Format as numbered list. Be specific and critical.
+"""
+    msgs = [
+        {"role": "system", "content": "You are a brutally honest but supportive resume reviewer."},
+        {"role": "user", "content": prompt},
+    ]
+    return nvidia_client.chat(msgs, max_tokens=600, temperature=0.5)
+
+
+def generate_cover_letter(profile: dict, job_desc: str) -> str:
+    prompt = f"""
+Write a compelling cover letter for this candidate applying to:
+Job Description: {job_desc}
+
+Candidate profile:
+{json.dumps(profile, indent=2)}
+
+Keep it under 300 words. Professional, confident, and specific. Use Markdown.
+"""
+    msgs = [
+        {"role": "system", "content": "You are an expert career coach specialising in cover letters."},
+        {"role": "user", "content": prompt},
+    ]
+    return nvidia_client.chat(msgs, max_tokens=800, temperature=0.6)
+
+
+def generate_interview_questions(job_title: str, skills: list) -> str:
+    prompt = f"""
+Generate 8 targeted interview questions for a {job_title} role.
+The candidate's key skills: {', '.join(skills) or 'general'}.
+
+Mix: 3 behavioral (STAR), 3 technical, 2 situational.
+After each question, add a one-line tip on how to answer it well.
+"""
+    msgs = [
+        {"role": "system", "content": "You are a senior hiring manager and interview coach."},
+        {"role": "user", "content": prompt},
+    ]
+    return nvidia_client.chat(msgs, max_tokens=900, temperature=0.5)
+
+# ─────────────────────────────────────────────
+#  VOICE HELPERS
+# ─────────────────────────────────────────────
 SUPPORTED_LANGUAGES = {
-    "en": "English",
-    "hi": "Hindi",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "kn": "Kannada",
-    "ml": "Malayalam",
-    "bn": "Bengali",
-    "mr": "Marathi",
-    "gu": "Gujarati",
-    "pa": "Punjabi"
+    "en": "English", "hi": "Hindi", "ta": "Tamil",
+    "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
+    "bn": "Bengali", "mr": "Marathi", "gu": "Gujarati", "pa": "Punjabi",
 }
 
-# Voice-related functions
-def text_to_speech(text, lang_code="en"):
+def text_to_speech(text: str, lang: str = "en") -> BytesIO | None:
     try:
-        tts = gTTS(text=text, lang=lang_code, slow=False)
+        tts = gTTS(text=text, lang=lang, slow=False)
         fp = BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
     except Exception as e:
-        st.error(f"Error in text-to-speech conversion: {str(e)}")
-        if lang_code != "en":
-            st.warning("Falling back to English for voice output")
-            return text_to_speech(text, "en")
+        st.error(f"TTS error: {e}")
         return None
 
-def autoplay_audio(audio_data):
-    b64 = base64.b64encode(audio_data.getvalue()).decode()
-    md = f"""
-        <audio autoplay>
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-    """
-    st.markdown(md, unsafe_allow_html=True)
+def autoplay_audio(audio_fp: BytesIO):
+    b64 = base64.b64encode(audio_fp.getvalue()).decode()
+    st.markdown(
+        f'<audio autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>',
+        unsafe_allow_html=True,
+    )
 
-def speech_to_text(lang_code="en"):
+def speech_to_text(lang: str = "en") -> str | None:
     try:
+        import speech_recognition as sr
         r = sr.Recognizer()
-        r.energy_threshold = 4000
+        r.energy_threshold = 3500
         r.dynamic_energy_threshold = True
-        st.info(f"🎙️ Listening in {SUPPORTED_LANGUAGES.get(lang_code, 'English')}... Speak now")
-        st.session_state.is_listening = True
+        st.info(f"🎙️ Listening in {SUPPORTED_LANGUAGES.get(lang, 'English')}… speak now")
         with sr.Microphone() as source:
             r.adjust_for_ambient_noise(source, duration=1)
             try:
                 audio = r.listen(source, timeout=8, phrase_time_limit=15)
-                try:
-                    text = r.recognize_google(audio, language=lang_code)
-                    st.success(f"Recognized: {text}")
-                    st.session_state.is_listening = False
-                    return text
-                except sr.UnknownValueError:
-                    st.warning("I couldn't understand what you said. Please try again.")
-                    st.session_state.is_listening = False
-                    return None
-                except sr.RequestError as e:
-                    st.error(f"Speech recognition service error: {e}")
-                    st.session_state.is_listening = False
-                    return None
+                text = r.recognize_google(audio, language=lang)
+                st.success(f"Recognised: {text}")
+                return text
             except sr.WaitTimeoutError:
-                st.warning("I didn't hear anything. Please try again when you're ready to speak.")
-                st.session_state.is_listening = False
-                return None
-    except Exception as e:
-        st.error(f"Microphone error: {str(e)}")
-        st.session_state.is_listening = False
-        return None
-
-# Resume Builder functions
-def generate_ai_resume(profile_data):
-    system_prompt = """
-    You are an expert resume writer with experience creating professional resumes for women in various industries.
-    Your task is to create a well-formatted, professional resume for the user based on their profile information.
-    The resume should highlight their skills, experience, and education effectively.
-    Format the resume in Markdown with clear sections for:
-    - Contact Information
-    - Professional Summary
-    - Skills
-    - Work Experience (with bullet points for responsibilities and achievements)
-    - Education
-    - Additional sections as appropriate (certifications, volunteer work, etc.)
-    Keep the content professional, concise, and impactful. Focus on achievements and results where possible.
-    """
-    profile_json = json.dumps(profile_data, indent=2)
-    prompt = f"""
-    Please create a professional resume based on the following profile information:
-    {profile_json}
-    Create a resume that will help this person stand out to potential employers.
-    Focus on their strengths and format the resume in a clean, professional way.
-    """
-    resume_content = query_ollama(prompt, system_prompt)
-    return resume_content
-
-def save_uploaded_file(uploaded_file):
-    if uploaded_file is not None:
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                shutil.copyfileobj(uploaded_file, tmp)
-                return tmp.name
-        except Exception as e:
-            st.error(f"Error saving uploaded file: {str(e)}")
-            return None
+                st.warning("Didn't catch that — please try again.")
+            except sr.UnknownValueError:
+                st.warning("Couldn't understand the audio.")
+            except sr.RequestError as e:
+                st.error(f"Speech service error: {e}")
+    except ImportError:
+        st.error("Install `SpeechRecognition` and `pyaudio` for voice input.")
     return None
 
-def parse_resume(file_path):
-    try:
-        return {
-            "name": "Sample Name",
-            "email": "sample@email.com",
-            "phone": "1234567890",
-            "skills": ["Communication", "Leadership", "Project Management"],
-            "education": [
-                {
-                    "degree": "Bachelor of Science",
-                    "institution": "Sample University",
-                    "year": "2018-2022"
-                }
-            ],
-            "work_history": [
-                {
-                    "title": "Project Manager",
-                    "company": "Sample Company",
-                    "duration": "2022-Present",
-                    "description": "Led cross-functional teams in delivering projects on time and under budget."
-                }
-            ]
-        }
-    except Exception as e:
-        st.error(f"Error parsing resume: {str(e)}")
-        return None
+# ─────────────────────────────────────────────
+#  FEEDBACK COMPONENT
+# ─────────────────────────────────────────────
+def display_feedback(message_id: str):
+    existing = st.session_state.feedback_ratings.get(message_id)
+    if existing == "up":
+        st.caption("👍 Thanks for the feedback!")
+    elif existing == "down":
+        st.caption("👎 Noted — I'll do better!")
+    else:
+        c1, c2, _ = st.columns([1, 1, 8])
+        with c1:
+            if st.button("👍", key=f"up_{message_id}"):
+                st.session_state.feedback_ratings[message_id] = "up"
+                st.rerun()
+        with c2:
+            if st.button("👎", key=f"dn_{message_id}"):
+                st.session_state.feedback_ratings[message_id] = "down"
+                st.rerun()
 
-# User feedback component
-def display_feedback_component(message_id):
-    feedback_col1, feedback_col2, feedback_col3 = st.columns([1, 3, 1])
-    with feedback_col2:
-        st.write("Was this response helpful?")
-        existing_rating = st.session_state.feedback_ratings.get(message_id, None)
-        if existing_rating is not None:
-            if existing_rating == "thumbs_up":
-                st.success("👍 Thank you for your positive feedback!")
-            elif existing_rating == "thumbs_down":
-                st.error("👎 Thank you for your feedback. We'll work to improve.")
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("👍 Yes", key=f"thumbs_up_{message_id}"):
-                    st.session_state.feedback_ratings[message_id] = "thumbs_up"
-                    st.rerun()
-            with col2:
-                if st.button("👎 No", key=f"thumbs_down_{message_id}"):
-                    st.session_state.feedback_ratings[message_id] = "thumbs_down"
-                    st.rerun()
+# ─────────────────────────────────────────────
+#  CUSTOM CSS
+# ─────────────────────────────────────────────
+def inject_css():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap');
 
-# Contact form submission handler
-def handle_contact_form(name, email, message, subject):
-    contact_data = {
-        "name": name,
-        "email": email,
-        "subject": subject,
-        "message": message,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', sans-serif;
     }
-    st.session_state.contact_form_submitted = True
-    st.session_state.contact_data = contact_data
-    return True
 
-# Main app interface
+    h1, h2, h3 {
+        font-family: 'Syne', sans-serif !important;
+        letter-spacing: -0.02em;
+    }
+
+    .stApp {
+        background: #0a0a0f;
+        color: #e8e8f0;
+    }
+
+    /* Glowing accent line under main title */
+    .nova-title {
+        font-family: 'Syne', sans-serif;
+        font-size: 2.6rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #76e3ff 0%, #a78bfa 50%, #f472b6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0;
+    }
+
+    .nova-sub {
+        color: #6b7280;
+        font-size: 0.95rem;
+        margin-top: 0.2rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+    }
+
+    /* Daily tip card */
+    .tip-card {
+        background: linear-gradient(135deg, #1e1b4b22, #0f172a);
+        border: 1px solid #312e8133;
+        border-left: 3px solid #a78bfa;
+        border-radius: 10px;
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+        color: #c4b5fd;
+    }
+
+    /* Chat messages */
+    .stChatMessage {
+        background: #111118 !important;
+        border-radius: 12px !important;
+        border: 1px solid #1e1e2e !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #0d0d14;
+        border-bottom: 1px solid #1e1e2e;
+        gap: 4px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        color: #6b7280 !important;
+        font-family: 'Syne', sans-serif;
+        font-weight: 700;
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        padding: 0.6rem 1.2rem;
+        border-radius: 8px 8px 0 0;
+        transition: all 0.2s;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: #a78bfa !important;
+        background: #1a1a2e !important;
+        border-bottom: 2px solid #a78bfa !important;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #4f46e5, #7c3aed);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-family: 'Syne', sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        transition: all 0.2s;
+        padding: 0.5rem 1.2rem;
+    }
+
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 20px #7c3aed44;
+    }
+
+    /* Text inputs */
+    .stTextInput > div > div > input,
+    .stTextArea textarea,
+    .stSelectbox > div > div {
+        background: #111118 !important;
+        border: 1px solid #2d2d3d !important;
+        color: #e8e8f0 !important;
+        border-radius: 8px !important;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: #0d0d14;
+        border-right: 1px solid #1e1e2e;
+    }
+
+    /* Chat input */
+    .stChatInputContainer {
+        background: #0d0d14 !important;
+        border-top: 1px solid #1e1e2e !important;
+    }
+
+    /* Metric cards */
+    [data-testid="stMetric"] {
+        background: #111118;
+        border: 1px solid #1e1e2e;
+        border-radius: 10px;
+        padding: 0.8rem;
+    }
+
+    /* Info / success / warning boxes */
+    .stAlert {
+        border-radius: 10px !important;
+        border: none !important;
+    }
+
+    /* Progress */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #4f46e5, #a78bfa) !important;
+        border-radius: 4px;
+    }
+
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: #111118 !important;
+        border-radius: 8px !important;
+        color: #c4b5fd !important;
+        font-family: 'Syne', sans-serif !important;
+        font-weight: 700 !important;
+    }
+
+    /* Download button */
+    .stDownloadButton > button {
+        background: transparent !important;
+        border: 1px solid #4f46e5 !important;
+        color: #a78bfa !important;
+    }
+
+    .stDownloadButton > button:hover {
+        background: #4f46e510 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  PROCESS QUERY
+# ─────────────────────────────────────────────
+def process_user_query(user_query: str, lang: str = "en"):
+    if not user_query or not user_query.strip():
+        return
+    msg_id = f"user_{uuid.uuid4().hex[:8]}"
+    st.session_state.messages.append({"role": "user", "content": user_query, "id": msg_id})
+
+    with st.chat_message("user"):
+        st.write(user_query)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Nova is thinking…"):
+            response = nova_chat(user_query)
+            resp_id = f"asst_{uuid.uuid4().hex[:8]}"
+            st.session_state.messages.append({"role": "assistant", "content": response, "id": resp_id})
+            st.write(response)
+            display_feedback(resp_id)
+            if st.session_state.get("voice_output", False):
+                audio = text_to_speech(response[:500], lang)
+                if audio:
+                    autoplay_audio(audio)
+
+# ─────────────────────────────────────────────
+#  PROFILE COMPLETENESS
+# ─────────────────────────────────────────────
+def profile_completeness(p: dict) -> int:
+    fields = ["name", "email", "phone", "job_target"]
+    list_fields = ["skills", "education", "work_history"]
+    score = sum(1 for f in fields if p.get(f)) + sum(1 for f in list_fields if p.get(f))
+    return int((score / (len(fields) + len(list_fields))) * 100)
+
+# ─────────────────────────────────────────────
+#  MAIN
+# ─────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="Asha - JobsForHer AI Assistant",
-        page_icon="👩‍💼",
-        layout="wide"
+        page_title="Nova — Personal Career Assistant",
+        page_icon="✦",
+        layout="wide",
+        initial_sidebar_state="expanded",
     )
-    tab1, tab2, tab3, tab4 = st.tabs(["Chat with Asha", "My Profile", "Resume Builder", "Contact Us"])
-    
+    inject_css()
+
+    # ── SIDEBAR ──────────────────────────────
+    with st.sidebar:
+        st.markdown('<div class="nova-title">✦ Nova</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nova-sub">Personal Career Assistant</div>', unsafe_allow_html=True)
+        st.divider()
+
+        pct = profile_completeness(st.session_state.user_profile)
+        st.caption(f"Profile completeness — {pct}%")
+        st.progress(pct / 100)
+
+        st.divider()
+        st.markdown("**⚙️ Settings**")
+        st.session_state["voice_output"] = st.toggle("🔊 Voice output", value=False)
+        st.session_state["enable_caching"] = st.toggle("⚡ Cache responses", value=True)
+
+        st.divider()
+        st.markdown("**🔑 NVIDIA API**")
+        nvidia_key_input = st.text_input("API Key", value=os.getenv("NVIDIA_API_KEY", ""), type="password")
+        if st.button("Save Key"):
+            with open(".env", "a") as f:
+                f.write(f"\nNVIDIA_API_KEY={nvidia_key_input}")
+            os.environ["NVIDIA_API_KEY"] = nvidia_key_input
+            nvidia_client.api_key = nvidia_key_input
+            nvidia_client.available = bool(nvidia_key_input)
+            st.success("Saved! Reconnected.")
+
+        st.divider()
+        if st.button("🗑️ Clear Chat"):
+            st.session_state.messages = []
+            st.rerun()
+        if st.button("🧹 Clear Cache"):
+            st.session_state.response_cache = {}
+            st.success("Cache cleared.")
+
+        st.divider()
+        st.caption(f"Session: `{st.session_state.session_id[:20]}…`")
+        status = "🟢 Connected" if nvidia_client.available else "🔴 No API Key"
+        st.caption(f"Model: `nvidia/llama-3.1-nemotron-70b`")
+        st.caption(status)
+
+    # ── TABS ─────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "💬 Chat", "👤 Profile", "📄 Resume Builder",
+        "🎯 Interview Prep", "✉️ Cover Letter", "📬 Contact",
+    ])
+
+    # ══════════════════════════════════════════
+    #  TAB 1 — CHAT
+    # ══════════════════════════════════════════
     with tab1:
-        st.title("Asha - JobsForHer AI Assistant")
-        st.caption("Your AI guide for career development and job opportunities")
-        api_client = JobsForHerAPI()
-        if not api_client.api_available:
-            st.sidebar.warning("⚠️ Running with sample data. To connect to JobsForHer API, please add API credentials in .env file.")
-        else:
-            st.sidebar.success("✅ Connected to JobsForHer API")
-        bias_rules = load_bias_rules()
-        for idx, message in enumerate(st.session_state.messages):
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-                if message["role"] == "assistant":
-                    message_id = message.get("id", f"msg_{idx}")
-                    display_feedback_component(message_id)
-        col1, col2, col3 = st.columns([5, 2, 1])
-        with col2:
-            lang_code = st.selectbox(
-                "Language", 
-                options=list(SUPPORTED_LANGUAGES.keys()), 
+        st.markdown('<h1 class="nova-title">✦ Nova</h1>', unsafe_allow_html=True)
+        st.markdown('<p class="nova-sub">Your AI-Powered Personal Career Assistant</p>', unsafe_allow_html=True)
+
+        # Daily tip
+        st.markdown(f'<div class="tip-card">✦ Daily Tip &nbsp;·&nbsp; {get_daily_tip()}</div>', unsafe_allow_html=True)
+
+        # Quick action chips
+        st.markdown("**Quick actions:**")
+        qcols = st.columns(4)
+        quick_prompts = [
+            ("🔍 Job Search Tips", "Give me 5 actionable job search strategies for today's market."),
+            ("📝 Improve My Resume", "What are the biggest mistakes people make on resumes?"),
+            ("🤝 Networking Script", "Write me a short LinkedIn connection request message for reaching out to someone in my target industry."),
+            ("💰 Salary Negotiation", "How should I negotiate a salary offer? Give me a script."),
+        ]
+        for col, (label, prompt) in zip(qcols, quick_prompts):
+            with col:
+                if st.button(label, use_container_width=True):
+                    process_user_query(prompt)
+
+        st.divider()
+
+        # Chat history
+        for idx, msg in enumerate(st.session_state.messages):
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+                if msg["role"] == "assistant":
+                    display_feedback(msg.get("id", f"msg_{idx}"))
+
+        # Input row
+        col_input, col_lang, col_voice = st.columns([6, 1.5, 1])
+        with col_lang:
+            lang = st.selectbox(
+                "Lang", options=list(SUPPORTED_LANGUAGES.keys()),
                 format_func=lambda x: SUPPORTED_LANGUAGES[x],
-                index=list(SUPPORTED_LANGUAGES.keys()).index(st.session_state.user_profile.get("preferred_language", "en"))
+                label_visibility="collapsed",
             )
-            st.session_state.user_profile["preferred_language"] = lang_code
-        with col3:
-            if st.button("🎤 Voice", key="voice_button"):
-                user_query = speech_to_text(lang_code)
-                if user_query and len(user_query.strip()) > 0:
-                    process_user_query(user_query, api_client, bias_rules, lang_code)
-        with col1:
-            user_query = st.chat_input("How can I help you with your career journey today?")
-            if user_query:
-                process_user_query(user_query, api_client, bias_rules, lang_code)
-        with st.sidebar:
-            voice_output = st.toggle("Enable Voice Output", value=True, key="auto_play_voice")
-            st.header("About Asha")
-            st.info("""
-            Asha is your AI assistant for the JobsForHer Foundation. 
-            I can help you with:
-            - Finding job opportunities
-            - Information about upcoming events and sessions
-            - Career advice and resources
-            - Women empowerment initiatives
-            - Resume building and career guidance
-            I'm here to support your professional journey!
-            """)
-            st.header("Voice Settings")
-            st.header("API Configuration")
-            if st.checkbox("Show API Settings", value=False):
-                with st.form("api_settings"):
-                    api_url = st.text_input("JobsForHer API URL", value=os.getenv("JFH_API_BASE_URL", "https://api.jobsforher.com/v1"))
-                    api_key = st.text_input("API Key", value=os.getenv("JFH_API_KEY", ""), type="password")
-                    api_secret = st.text_input("API Secret", value=os.getenv("JFH_API_SECRET", ""), type="password")
-                    ollama_url = st.text_input("Ollama API URL", value=os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate"))
-                    ollama_model = st.text_input("Ollama Model", value=os.getenv("OLLAMA_MODEL", "llama3.2"))
-                    if st.form_submit_button("Save Configuration"):
-                        with open(".env", "w") as env_file:
-                            env_file.write(f"JFH_API_BASE_URL={api_url}\n")
-                            env_file.write(f"JFH_API_KEY={api_key}\n")
-                            env_file.write(f"JFH_API_SECRET={api_secret}\n")
-                            env_file.write(f"OLLAMA_API_URL={ollama_url}\n")
-                            env_file.write(f"OLLAMA_MODEL={ollama_model}\n")
-                        st.success("Configuration saved! Please restart the application for changes to take effect.")
-            st.header("Performance Options")
-            st.checkbox("Enable response caching for faster replies", value=True, key="enable_caching")
-            if st.button("Clear Cache"):
-                st.session_state.response_cache = {}
-                st.success("Response cache cleared!")
-            st.header("Session Information")
-            st.text(f"Session ID: {st.session_state.session_id}")
-            if st.button("Clear Chat"):
-                st.session_state.messages = []
-                st.rerun()
-    
+        with col_voice:
+            if st.button("🎤"):
+                spoken = speech_to_text(lang)
+                if spoken:
+                    process_user_query(spoken, lang)
+
+        with col_input:
+            user_input = st.chat_input("Ask Nova anything about your career…")
+            if user_input:
+                process_user_query(user_input, lang)
+
+    # ══════════════════════════════════════════
+    #  TAB 2 — PROFILE
+    # ══════════════════════════════════════════
     with tab2:
-        st.title("My Profile")
-        st.caption("Manage your professional information to get personalized assistance")
-        with st.form("user_profile_form"):
-            st.subheader("Personal Information")
-            col1, col2 = st.columns(2)
-            with col1:
-                name = st.text_input("Full Name", value=st.session_state.user_profile.get("name", ""))
-                email = st.text_input("Email", value=st.session_state.user_profile.get("email", ""))
-            with col2:
-                phone = st.text_input("Phone", value=st.session_state.user_profile.get("phone", ""))
-                experience = st.slider("Years of Experience", min_value=0, max_value=30, value=st.session_state.user_profile.get("experience", 0))
-            st.subheader("Communication Preferences")
-            preferred_lang = st.selectbox(
-                "Preferred Language",
-                options=list(SUPPORTED_LANGUAGES.keys()),
-                format_func=lambda x: SUPPORTED_LANGUAGES[x],
-                index=list(SUPPORTED_LANGUAGES.keys()).index(st.session_state.user_profile.get("preferred_language", "en"))
-            )
-            if st.form_submit_button("Save Profile"):
+        st.markdown("## 👤 My Profile")
+        st.caption("Keep this up-to-date for personalised advice and AI-generated documents.")
+
+        p = st.session_state.user_profile
+
+        with st.form("profile_form"):
+            st.subheader("Personal Info")
+            c1, c2 = st.columns(2)
+            with c1:
+                name  = st.text_input("Full Name", value=p.get("name", ""))
+                email = st.text_input("Email", value=p.get("email", ""))
+                phone = st.text_input("Phone", value=p.get("phone", ""))
+            with c2:
+                job_target  = st.text_input("Target Job Title", value=p.get("job_target", ""))
+                experience  = st.slider("Years of Experience", 0, 40, value=p.get("experience", 0))
+                preferred_lang = st.selectbox(
+                    "Preferred Language",
+                    list(SUPPORTED_LANGUAGES.keys()),
+                    format_func=lambda x: SUPPORTED_LANGUAGES[x],
+                    index=list(SUPPORTED_LANGUAGES.keys()).index(p.get("preferred_language", "en")),
+                )
+
+            st.subheader("Online Presence")
+            c3, c4, c5 = st.columns(3)
+            with c3: linkedin  = st.text_input("LinkedIn URL", value=p.get("linkedin", ""))
+            with c4: github    = st.text_input("GitHub URL", value=p.get("github", ""))
+            with c5: portfolio = st.text_input("Portfolio URL", value=p.get("portfolio", ""))
+
+            if st.form_submit_button("💾 Save Profile"):
                 st.session_state.user_profile.update({
-                    "name": name,
-                    "email": email,
-                    "phone": phone,
-                    "experience": experience,
-                    "preferred_language": preferred_lang
+                    "name": name, "email": email, "phone": phone,
+                    "job_target": job_target, "experience": experience,
+                    "preferred_language": preferred_lang,
+                    "linkedin": linkedin, "github": github, "portfolio": portfolio,
                 })
-                st.success("Profile saved successfully!")
-        
-        st.subheader("Skills")
-        with st.form("add_skill_form"):
-            skill_input = st.text_input("Add a skill")
-            if st.form_submit_button("Add Skill"):
-                if skill_input:
-                    if "skills" not in st.session_state.user_profile:
-                        st.session_state.user_profile["skills"] = []
-                    st.session_state.user_profile["skills"].append(skill_input)
-                    st.success(f"Skill '{skill_input}' added!")
-        if "skills" in st.session_state.user_profile and len(st.session_state.user_profile["skills"]) > 0:
-            st.write("Your skills:")
-            cols = st.columns(3)
-            for i, skill in enumerate(st.session_state.user_profile["skills"]):
-                col_idx = i % 3
-                with cols[col_idx]:
-                    if st.button(f"❌ {skill}", key=f"remove_skill_{i}"):
-                        st.session_state.user_profile["skills"].remove(skill)
+                st.success("Profile saved!")
+
+        # Skills
+        st.subheader("🛠️ Skills")
+        with st.form("skill_form"):
+            c1, c2 = st.columns([4, 1])
+            with c1: new_skill = st.text_input("Add a skill", label_visibility="collapsed", placeholder="e.g. Python, Product Management, UX Research")
+            with c2: add_skill = st.form_submit_button("Add")
+            if add_skill and new_skill:
+                p.setdefault("skills", []).append(new_skill.strip())
+                st.rerun()
+
+        if p.get("skills"):
+            cols = st.columns(4)
+            for i, skill in enumerate(p["skills"]):
+                with cols[i % 4]:
+                    if st.button(f"✕  {skill}", key=f"rm_sk_{i}", use_container_width=True):
+                        p["skills"].pop(i)
                         st.rerun()
-        
-        st.subheader("Education")
-        if "education" in st.session_state.user_profile and len(st.session_state.user_profile["education"]) > 0:
-            for i, edu in enumerate(st.session_state.user_profile["education"]):
-                with st.expander(f"{edu.get('degree', 'Education')} - {edu.get('institution', '')}"):
-                    col1, col2, col3 = st.columns([2, 2, 1])
-                    with col1:
-                        degree = st.text_input("Degree", value=edu.get("degree", ""), key=f"edu_degree_{i}")
-                    with col2:
-                        institution = st.text_input("Institution", value=edu.get("institution", ""), key=f"edu_inst_{i}")
-                    with col3:
-                        year = st.text_input("Year", value=edu.get("year", ""), key=f"edu_year_{i}")
-                    if st.button("Remove", key=f"remove_edu_{i}"):
-                        st.session_state.user_profile["education"].pop(i)
-                        st.rerun()
-                    if st.button("Update", key=f"update_edu_{i}"):
-                        st.session_state.user_profile["education"][i] = {
-                            "degree": degree,
-                            "institution": institution,
-                            "year": year
-                        }
-                        st.success("Education updated!")
-        with st.form("add_education_form"):
-            st.write("Add Education")
-            col1, col2, col3 = st.columns([2, 2, 1])
-            with col1:
-                new_degree = st.text_input("Degree")
-            with col2:
-                new_institution = st.text_input("Institution")
-            with col3:
-                new_year = st.text_input("Year")
-            if st.form_submit_button("Add Education"):
-                if new_degree and new_institution:
-                    if "education" not in st.session_state.user_profile:
-                        st.session_state.user_profile["education"] = []
-                    st.session_state.user_profile["education"].append({
-                        "degree": new_degree,
-                        "institution": new_institution,
-                        "year": new_year
-                    })
-                    st.success("Education added!")
-        
-        st.subheader("Work History")
-        if "work_history" in st.session_state.user_profile and len(st.session_state.user_profile["work_history"]) > 0:
-            for i, work in enumerate(st.session_state.user_profile["work_history"]):
-                with st.expander(f"{work.get('title', 'Position')} at {work.get('company', '')}"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        title = st.text_input("Job Title", value=work.get("title", ""), key=f"work_title_{i}")
-                        company = st.text_input("Company", value=work.get("company", ""), key=f"work_company_{i}")
-                    with col2:
-                        duration = st.text_input("Duration", value=work.get("duration", ""), key=f"work_duration_{i}")
-                        description = st.text_area("Description", value=work.get("description", ""), key=f"work_desc_{i}")
-                    if st.button("Remove", key=f"remove_work_{i}"):
-                        st.session_state.user_profile["work_history"].pop(i)
-                        st.rerun()
-                    if st.button("Update", key=f"update_work_{i}"):
-                        st.session_state.user_profile["work_history"][i] = {
-                            "title": title,
-                            "company": company,
-                            "duration": duration,
-                            "description": description
-                        }
-                        st.success("Work history updated!")
-        with st.form("add_work_form"):
-            st.write("Add Work Experience")
-            col1, col2 = st.columns(2)
-            with col1:
-                new_title = st.text_input("Job Title")
-                new_company = st.text_input("Company")
-            with col2:
-                new_duration = st.text_input("Duration (e.g., 2020-2023)")
-                new_description = st.text_area("Description")
-            if st.form_submit_button("Add Work Experience"):
-                if new_title and new_company:
-                    if "work_history" not in st.session_state.user_profile:
-                        st.session_state.user_profile["work_history"] = []
-                    st.session_state.user_profile["work_history"].append({
-                        "title": new_title,
-                        "company": new_company,
-                        "duration": new_duration,
-                        "description": new_description
-                    })
-                    st.success("Work experience added!")
-    
+
+        # Education
+        st.subheader("🎓 Education")
+        if p.get("education"):
+            for i, edu in enumerate(p["education"]):
+                with st.expander(f"{edu.get('degree','?')} — {edu.get('institution','')}"):
+                    c1, c2, c3 = st.columns([3, 3, 2])
+                    with c1: deg  = st.text_input("Degree", edu.get("degree",""), key=f"ed_d_{i}")
+                    with c2: inst = st.text_input("Institution", edu.get("institution",""), key=f"ed_i_{i}")
+                    with c3: yr   = st.text_input("Year", edu.get("year",""), key=f"ed_y_{i}")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        if st.button("Update", key=f"upd_edu_{i}"):
+                            p["education"][i] = {"degree": deg, "institution": inst, "year": yr}
+                            st.success("Updated!")
+                    with col_b:
+                        if st.button("Remove", key=f"rm_edu_{i}"):
+                            p["education"].pop(i)
+                            st.rerun()
+
+        with st.form("edu_form"):
+            c1, c2, c3 = st.columns([3, 3, 2])
+            with c1: nd = st.text_input("Degree")
+            with c2: ni = st.text_input("Institution")
+            with c3: ny = st.text_input("Year")
+            if st.form_submit_button("➕ Add Education") and nd and ni:
+                p.setdefault("education", []).append({"degree": nd, "institution": ni, "year": ny})
+                st.success("Added!")
+
+        # Work History
+        st.subheader("💼 Work History")
+        if p.get("work_history"):
+            for i, w in enumerate(p["work_history"]):
+                with st.expander(f"{w.get('title','?')} @ {w.get('company','')}"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        t  = st.text_input("Title", w.get("title",""), key=f"wt_{i}")
+                        co = st.text_input("Company", w.get("company",""), key=f"wc_{i}")
+                    with c2:
+                        du = st.text_input("Duration", w.get("duration",""), key=f"wd_{i}")
+                        de = st.text_area("Key Achievements", w.get("description",""), key=f"wde_{i}")
+                    ca, cb = st.columns(2)
+                    with ca:
+                        if st.button("Update", key=f"upd_wk_{i}"):
+                            p["work_history"][i] = {"title": t, "company": co, "duration": du, "description": de}
+                            st.success("Updated!")
+                    with cb:
+                        if st.button("Remove", key=f"rm_wk_{i}"):
+                            p["work_history"].pop(i)
+                            st.rerun()
+
+        with st.form("work_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                nt = st.text_input("Job Title")
+                nc = st.text_input("Company")
+            with c2:
+                ndu = st.text_input("Duration (e.g. 2021–2024)")
+                nde = st.text_area("Key Achievements")
+            if st.form_submit_button("➕ Add Work Experience") and nt and nc:
+                p.setdefault("work_history", []).append({"title": nt, "company": nc, "duration": ndu, "description": nde})
+                st.success("Added!")
+
+    # ══════════════════════════════════════════
+    #  TAB 3 — RESUME BUILDER
+    # ══════════════════════════════════════════
     with tab3:
-        st.title("Resume Builder")
-        st.caption("Create a professional resume tailored to your skills and experience")
-        option = st.radio("Choose an option:", ["Generate AI Resume", "Upload Existing Resume"])
-        if option == "Generate AI Resume":
-            st.info("Let our AI create a professional resume based on your profile information")
-            profile_complete = (
-                st.session_state.user_profile.get("name", "") != "" and
-                len(st.session_state.user_profile.get("skills", [])) > 0 and
-                len(st.session_state.user_profile.get("education", [])) > 0 and
-                len(st.session_state.user_profile.get("work_history", [])) > 0
-            )
-            if not profile_complete:
-                st.warning("Please complete your profile in the 'My Profile' tab before generating a resume")
+        st.markdown("## 📄 Resume Builder")
+
+        option = st.radio("Mode:", ["✨ AI-Generate Resume", "📂 Upload & Analyse"], horizontal=True)
+
+        if option == "✨ AI-Generate Resume":
+            p = st.session_state.user_profile
+            ready = p.get("name") and p.get("skills") and p.get("education") and p.get("work_history")
+
+            if not ready:
+                st.warning("Complete your Profile tab (name, skills, education, work history) before generating.")
             else:
-                if st.button("Generate Resume"):
-                    with st.spinner("Generating your professional resume..."):
-                        resume_content = generate_ai_resume(st.session_state.user_profile)
-                        st.session_state.user_profile["resume_data"] = resume_content
-                if "resume_data" in st.session_state.user_profile and st.session_state.user_profile["resume_data"]:
-                    st.subheader("Your Generated Resume")
-                    st.markdown(st.session_state.user_profile["resume_data"])
-                    resume_download = st.session_state.user_profile["resume_data"]
+                if st.button("🚀 Generate My Resume", use_container_width=True):
+                    with st.spinner("Crafting your resume with NVIDIA Nemotron…"):
+                        resume_md = generate_resume(p)
+                        st.session_state.user_profile["resume_data"] = resume_md
+
+                if p.get("resume_data"):
+                    st.markdown("---")
+                    st.markdown(p["resume_data"])
+                    fn = (p.get("name") or "resume").replace(" ", "_")
                     st.download_button(
-                        label="Download Resume (Markdown)",
-                        data=resume_download,
-                        file_name=f"{st.session_state.user_profile['name'].replace(' ', '_')}_resume.md",
+                        "⬇️ Download Resume (Markdown)",
+                        data=p["resume_data"],
+                        file_name=f"{fn}_resume.md",
                         mime="text/markdown",
                     )
+
         else:
-            st.info("Upload your existing resume for analysis and suggestions")
-            uploaded_file = st.file_uploader("Upload your resume (PDF, DOCX, or TXT)", type=["pdf", "docx", "txt"])
-            if uploaded_file is not None:
-                file_path = save_uploaded_file(uploaded_file)
-                if file_path:
-                    st.success("Resume uploaded successfully!")
-                    if st.button("Analyze Resume"):
-                        with st.spinner("Analyzing your resume..."):
-                            parsed_data = parse_resume(file_path)
-                            if parsed_data:
-                                st.session_state.user_profile.update(parsed_data)
-                                st.success("Resume analyzed successfully! Profile information has been updated.")
-                                st.subheader("Extracted Information")
-                                st.json(parsed_data)
-                                st.subheader("AI Feedback on Your Resume")
-                                feedback_prompt = f"""
-                                Provide professional feedback on this resume:
-                                {json.dumps(parsed_data, indent=2)}
-                                Focus on:
-                                1. Strengths of the resume
-                                2. Areas for improvement
-                                3. Specific suggestions to make it more appealing to employers
-                                Keep your feedback concise, constructive, and actionable.
-                                """
-                                feedback = query_ollama(feedback_prompt)
-                                st.markdown(feedback)
-    
+            uploaded = st.file_uploader("Upload your resume (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
+            if uploaded:
+                st.success(f"Uploaded: **{uploaded.name}**")
+                if st.button("🔍 Analyse Resume"):
+                    with st.spinner("Analysing with NVIDIA Nemotron…"):
+                        # Stub parser — replace with real parser (pdfminer, python-docx, etc.)
+                        parsed = {
+                            "name": st.session_state.user_profile.get("name", "Unknown"),
+                            "skills": st.session_state.user_profile.get("skills", []),
+                            "education": st.session_state.user_profile.get("education", []),
+                            "work_history": st.session_state.user_profile.get("work_history", []),
+                        }
+                        feedback = analyze_resume_feedback(parsed)
+                        st.subheader("🎯 AI Feedback")
+                        st.markdown(feedback)
+
+    # ══════════════════════════════════════════
+    #  TAB 4 — INTERVIEW PREP  (NEW ✨)
+    # ══════════════════════════════════════════
     with tab4:
-        st.title("Contact Us")
-        st.caption("Get in touch with the JobsForHer team for any questions or assistance")
+        st.markdown("## 🎯 Interview Prep")
+        st.caption("AI-generated questions tailored to your target role and skills.")
+
+        p = st.session_state.user_profile
+        job_title_input = st.text_input(
+            "Target Job Title",
+            value=p.get("job_target", ""),
+            placeholder="e.g. Senior Data Scientist",
+        )
+        skills_input = st.text_input(
+            "Your Key Skills (comma-separated)",
+            value=", ".join(p.get("skills", [])),
+            placeholder="e.g. Python, Machine Learning, SQL",
+        )
+
+        if st.button("🎲 Generate Interview Questions", use_container_width=True):
+            if job_title_input:
+                with st.spinner("Generating personalised questions…"):
+                    skills_list = [s.strip() for s in skills_input.split(",") if s.strip()]
+                    questions = generate_interview_questions(job_title_input, skills_list)
+                    st.session_state["interview_questions"] = questions
+            else:
+                st.warning("Please enter a target job title.")
+
+        if st.session_state.get("interview_questions"):
+            st.markdown("---")
+            st.markdown(st.session_state["interview_questions"])
+            st.download_button(
+                "⬇️ Download Questions",
+                data=st.session_state["interview_questions"],
+                file_name="interview_questions.md",
+                mime="text/markdown",
+            )
+
+        st.divider()
+        st.subheader("🗣️ Practice Mode")
+        st.caption("Type your answer below and Nova will give you instant feedback.")
+        practice_q = st.text_area("Paste an interview question:")
+        practice_a = st.text_area("Your answer:")
+        if st.button("📊 Get Feedback on My Answer"):
+            if practice_q and practice_a:
+                with st.spinner("Evaluating…"):
+                    fb = nova_chat(
+                        f"Interview question: {practice_q}\n\nMy answer: {practice_a}\n\nGive structured feedback: strengths, weaknesses, and an improved version of my answer.",
+                        max_tokens=600,
+                    )
+                    st.markdown(fb)
+            else:
+                st.warning("Enter both a question and your answer.")
+
+    # ══════════════════════════════════════════
+    #  TAB 5 — COVER LETTER  (NEW ✨)
+    # ══════════════════════════════════════════
+    with tab5:
+        st.markdown("## ✉️ Cover Letter Generator")
+        st.caption("Paste a job description and Nova writes a tailored cover letter in seconds.")
+
+        job_desc = st.text_area(
+            "Job Description",
+            height=200,
+            placeholder="Paste the full job description here…",
+        )
+        tone = st.select_slider(
+            "Tone",
+            options=["Formal", "Balanced", "Conversational"],
+            value="Balanced",
+        )
+
+        if st.button("✍️ Generate Cover Letter", use_container_width=True):
+            if job_desc:
+                p = st.session_state.user_profile
+                if not p.get("name"):
+                    st.warning("Add your name in the Profile tab first.")
+                else:
+                    with st.spinner("Writing your cover letter…"):
+                        letter = generate_cover_letter(p, f"[Tone: {tone}]\n{job_desc}")
+                        st.session_state["cover_letter"] = letter
+            else:
+                st.warning("Please paste a job description.")
+
+        if st.session_state.get("cover_letter"):
+            st.markdown("---")
+            st.markdown(st.session_state["cover_letter"])
+            fn = (st.session_state.user_profile.get("name") or "cover_letter").replace(" ", "_")
+            st.download_button(
+                "⬇️ Download Cover Letter",
+                data=st.session_state["cover_letter"],
+                file_name=f"{fn}_cover_letter.md",
+                mime="text/markdown",
+            )
+
+    # ══════════════════════════════════════════
+    #  TAB 6 — CONTACT
+    # ══════════════════════════════════════════
+    with tab6:
+        st.markdown("## 📬 Contact")
+
         if st.session_state.contact_form_submitted:
-            st.success("Thank you for your message! We'll get back to you soon.")
+            st.success("✅ Message sent! I'll get back to you soon.")
             if st.button("Send another message"):
                 st.session_state.contact_form_submitted = False
                 st.rerun()
         else:
             with st.form("contact_form"):
-                contact_name = st.text_input("Your Name", value=st.session_state.user_profile.get("name", ""))
-                contact_email = st.text_input("Your Email", value=st.session_state.user_profile.get("email", ""))
-                contact_subject = st.selectbox(
-                    "Subject",
-                    options=[
-                        "General Inquiry",
-                        "Technical Support",
-                        "Job Application Help",
-                        "Resume Review Request",
-                        "Feedback on Asha",
-                        "Other"
-                    ]
-                )
-                contact_message = st.text_area("Your Message", height=150)
-                if st.form_submit_button("Send Message"):
-                    if contact_name and contact_email and contact_message:
-                        success = handle_contact_form(contact_name, contact_email, contact_message, contact_subject)
-                        if success:
-                            st.success("Thank you for your message! We'll get back to you soon.")
-                            st.session_state.contact_form_submitted = True
-                            st.rerun()
+                p = st.session_state.user_profile
+                c1, c2 = st.columns(2)
+                with c1: cn = st.text_input("Name", value=p.get("name",""))
+                with c2: ce = st.text_input("Email", value=p.get("email",""))
+                cs = st.selectbox("Subject", [
+                    "General Inquiry", "Bug Report",
+                    "Feature Request", "Resume Review",
+                    "Feedback on Nova", "Other",
+                ])
+                cm = st.text_area("Message", height=140)
+                if st.form_submit_button("📤 Send Message"):
+                    if cn and ce and cm:
+                        st.session_state.contact_form_submitted = True
+                        st.session_state.contact_data = {
+                            "name": cn, "email": ce, "subject": cs,
+                            "message": cm, "ts": datetime.now().isoformat(),
+                        }
+                        st.rerun()
                     else:
-                        st.error("Please fill in all required fields")
-            st.header("Other Ways to Reach Us")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("JobsForHer Foundation")
-                st.write("123 Career Avenue")
-                st.write("Bangalore, Karnataka 560001")
-                st.write("India")
-            with col2:
-                st.subheader("Contact Information")
-                st.write("Email: psnehadeepika2006@gmail.com")
-                st.write("Phone: +91-80-1234-5678")
-                st.write("Hours: Mon-Fri, 9 AM - 6 PM IST")
+                        st.error("Please fill in all fields.")
 
-def process_user_query(user_query, api_client, bias_rules, lang_code="en"):
-    if user_query:
-        message_id = f"user_{int(time.time())}"
-        st.session_state.messages.append({"role": "user", "content": user_query, "id": message_id})
-        with st.chat_message("user"):
-            st.write(user_query)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = process_query(user_query, api_client, bias_rules)
-                response_id = f"assistant_{int(time.time())}"
-                st.session_state.messages.append({"role": "assistant", "content": response, "id": response_id})
-                st.write(response)
-                display_feedback_component(response_id)
-                if st.session_state.get("auto_play_voice", False):
-                    with st.spinner("Generating voice..."):
-                        audio_data = text_to_speech(response, lang_code)
-                        if audio_data:
-                            autoplay_audio(audio_data)
+            st.divider()
+            st.markdown("**Direct contact**")
+            st.write("📧 your@email.com")
+            st.write("🌐 yourportfolio.com")
+            st.write("⏰ Response time: within 48 hours")
+
 
 if __name__ == "__main__":
     main()
