@@ -529,38 +529,6 @@ def main():
 
     # ── SIDEBAR ──────────────────────────────
     with st.sidebar:
-        # ── API KEY GATE ─────────────────────
-        st.markdown("**🔑 NVIDIA API Key**")
-        st.caption("Required to use CareerPilot. Get yours free at [build.nvidia.com](https://build.nvidia.com)")
-
-        user_api_key = st.text_input(
-            "Enter your NVIDIA API Key",
-            value="",
-            type="password",
-            placeholder="your_api_key",
-            label_visibility="collapsed",
-        )
-
-        if user_api_key:
-            if user_api_key != st.session_state.get("user_api_key"):
-                st.session_state["user_api_key"] = user_api_key
-                nvidia_client.api_key = user_api_key
-                nvidia_client.available = True
-                st.success("✅ API key set!")
-            else:
-                nvidia_client.api_key = user_api_key
-                nvidia_client.available = True
-        else:
-            nvidia_client.available = False
-            nvidia_client.api_key = ""
-
-        st.divider()
-
-        # Block the rest of the app if no key provided
-        if not nvidia_client.available:
-            st.warning("⚠️ Enter your API key above to unlock CareerPilot.")
-            st.stop()
-
         pct = profile_completeness(st.session_state.user_profile)
         st.caption(f"Profile completeness — {pct}%")
         st.progress(pct / 100)
