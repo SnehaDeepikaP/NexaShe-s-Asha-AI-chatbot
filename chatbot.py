@@ -95,7 +95,7 @@ nvidia_client = NvidiaAPIClient()
 #  SYSTEM PROMPT
 # ─────────────────────────────────────────────
 SYSTEM_PROMPT = """
-You are Nova, a sharp and empowering Personal Career Assistant AI.
+You are CareerPilot, a sharp and empowering Personal Career Assistant AI.
 Your mission: help users accelerate their careers through guidance on job searching, resume building, interview prep, skill development, networking, and personal branding.
 
 Guidelines:
@@ -106,6 +106,7 @@ Guidelines:
 - When discussing career paths, highlight both traditional and unconventional routes.
 - Keep voice-friendly responses brief (under 120 words).
 - You are NOT affiliated with any external job platform. You are the user's personal AI career coach.
+- Your name is CareerPilot.
 """
 
 # ─────────────────────────────────────────────
@@ -159,7 +160,7 @@ User profile:
     return messages
 
 
-def nova_chat(user_query: str, extra_context: str = "", max_tokens: int = 512) -> str:
+def careerpilot_chat(user_query: str, extra_context: str = "", max_tokens: int = 512) -> str:
     cache_key = f"{user_query}_{extra_context}"
     if st.session_state.get("enable_caching", True) and cache_key in st.session_state.response_cache:
         return st.session_state.response_cache[cache_key]
@@ -494,8 +495,8 @@ def process_user_query(user_query: str, lang: str = "en"):
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Nova is thinking…"):
-            response = nova_chat(user_query)
+        with st.spinner("CareerPilot is thinking…"):
+            response = careerpilot_chat(user_query)
             resp_id = f"asst_{uuid.uuid4().hex[:8]}"
             st.session_state.messages.append({"role": "assistant", "content": response, "id": resp_id})
             st.write(response)
@@ -519,8 +520,8 @@ def profile_completeness(p: dict) -> int:
 # ─────────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="Nova — Personal Career Assistant",
-        page_icon="✦",
+        page_title="CareerPilot — Personal Career Assistant",
+        page_icon="✈",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -528,9 +529,45 @@ def main():
 
     # ── SIDEBAR ──────────────────────────────
     with st.sidebar:
-        st.markdown('<div class="nova-title">✦ Nova</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nova-title">✈ CareerPilot</div>', unsafe_allow_html=True)
         st.markdown('<div class="nova-sub">Personal Career Assistant</div>', unsafe_allow_html=True)
         st.divider()
+
+        # ── API KEY GATE ─────────────────────
+        st.markdown("**🔑 NVIDIA API Key**")
+        st.caption("Required to use CareerPilot. Get yours free at [build.nvidia.com](https://build.nvidia.com)")
+
+        # Pre-fill from .env if available, else from session state
+        env_key = os.getenv("NVIDIA_API_KEY", "")
+        saved_key = st.session_state.get("user_api_key", env_key)
+
+        user_api_key = st.text_input(
+            "Enter your NVIDIA API Key",
+            value=saved_key,
+            type="password",
+            placeholder="nvapi-xxxxxxxxxxxxxxxxxxxx",
+            label_visibility="collapsed",
+        )
+
+        if user_api_key:
+            # Update the client live whenever the key changes
+            if user_api_key != st.session_state.get("user_api_key"):
+                st.session_state["user_api_key"] = user_api_key
+                nvidia_client.api_key = user_api_key
+                nvidia_client.available = True
+                st.success("✅ API key set!")
+            else:
+                nvidia_client.api_key = user_api_key
+                nvidia_client.available = True
+        else:
+            nvidia_client.available = False
+
+        st.divider()
+
+        # Block the rest of the app if no key provided
+        if not nvidia_client.available:
+            st.warning("⚠️ Enter your API key above to unlock CareerPilot.")
+            st.stop()
 
         pct = profile_completeness(st.session_state.user_profile)
         st.caption(f"Profile completeness — {pct}%")
@@ -542,17 +579,6 @@ def main():
         st.session_state["enable_caching"] = st.toggle("⚡ Cache responses", value=True)
 
         st.divider()
-        st.markdown("**🔑 NVIDIA API**")
-        nvidia_key_input = st.text_input("API Key", value=os.getenv("NVIDIA_API_KEY", ""), type="password")
-        if st.button("Save Key"):
-            with open(".env", "a") as f:
-                f.write(f"\nNVIDIA_API_KEY={nvidia_key_input}")
-            os.environ["NVIDIA_API_KEY"] = nvidia_key_input
-            nvidia_client.api_key = nvidia_key_input
-            nvidia_client.available = bool(nvidia_key_input)
-            st.success("Saved! Reconnected.")
-
-        st.divider()
         if st.button("🗑️ Clear Chat"):
             st.session_state.messages = []
             st.rerun()
@@ -562,9 +588,8 @@ def main():
 
         st.divider()
         st.caption(f"Session: `{st.session_state.session_id[:20]}…`")
-        status = "🟢 Connected" if nvidia_client.available else "🔴 No API Key"
         st.caption(f"Model: `nvidia/llama-3.1-nemotron-70b`")
-        st.caption(status)
+        st.caption("🟢 Connected")
 
     # ── TABS ─────────────────────────────────
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -576,7 +601,7 @@ def main():
     #  TAB 1 — CHAT
     # ══════════════════════════════════════════
     with tab1:
-        st.markdown('<h1 class="nova-title">✦ Nova</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 class="nova-title">✈ CareerPilot</h1>', unsafe_allow_html=True)
         st.markdown('<p class="nova-sub">Your AI-Powered Personal Career Assistant</p>', unsafe_allow_html=True)
 
         # Daily tip
@@ -620,7 +645,7 @@ def main():
                     process_user_query(spoken, lang)
 
         with col_input:
-            user_input = st.chat_input("Ask Nova anything about your career…")
+            user_input = st.chat_input("Ask CareerPilot anything about your career…")
             if user_input:
                 process_user_query(user_input, lang)
 
@@ -833,13 +858,13 @@ def main():
 
         st.divider()
         st.subheader("🗣️ Practice Mode")
-        st.caption("Type your answer below and Nova will give you instant feedback.")
+        st.caption("Type your answer below and CareerPilot will give you instant feedback.")
         practice_q = st.text_area("Paste an interview question:")
         practice_a = st.text_area("Your answer:")
         if st.button("📊 Get Feedback on My Answer"):
             if practice_q and practice_a:
                 with st.spinner("Evaluating…"):
-                    fb = nova_chat(
+                    fb = careerpilot_chat(
                         f"Interview question: {practice_q}\n\nMy answer: {practice_a}\n\nGive structured feedback: strengths, weaknesses, and an improved version of my answer.",
                         max_tokens=600,
                     )
@@ -852,7 +877,7 @@ def main():
     # ══════════════════════════════════════════
     with tab5:
         st.markdown("## ✉️ Cover Letter Generator")
-        st.caption("Paste a job description and Nova writes a tailored cover letter in seconds.")
+        st.caption("Paste a job description and CareerPilot writes a tailored cover letter in seconds.")
 
         job_desc = st.text_area(
             "Job Description",
@@ -908,7 +933,7 @@ def main():
                 cs = st.selectbox("Subject", [
                     "General Inquiry", "Bug Report",
                     "Feature Request", "Resume Review",
-                    "Feedback on Nova", "Other",
+                    "Feedback on CareerPilot", "Other",
                 ])
                 cm = st.text_area("Message", height=140)
                 if st.form_submit_button("📤 Send Message"):
