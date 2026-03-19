@@ -552,7 +552,7 @@ def main():
                 nvidia_client.available = True
         else:
             nvidia_client.available = False
-            nvidia_client.api_key = 
+            nvidia_client.api_key = ""
 
         st.divider()
 
